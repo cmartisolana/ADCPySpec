@@ -2,6 +2,7 @@ LICENSE
 README.md
 setup.py
 pyspec/__init__.py
+pyspec/cross_spectrum.py
 pyspec/helmholtz.py
 pyspec/spectrum.py
 pyspec.egg-info/PKG-INFO
