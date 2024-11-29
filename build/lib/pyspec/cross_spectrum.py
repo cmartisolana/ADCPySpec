@@ -1,14 +1,7 @@
 import numpy as np
 from scipy.signal import detrend as sci_detrend
 from scipy.signal import windows as windows
-from scipy.ndimage import filters
-from scipy.signal import convolve2d
-from scipy.signal import fftconvolve as sci_fftconvolve, convolve as sci_convolve
-from scipy.signal import butter, lfilter, buttord, filtfilt, firwin
-from scipy import stats
 #import kPyWavelet as wavelet
-from pylab import find, figure, axes, draw, show
-from matplotlib import pyplot as plt
 from scipy.interpolate import griddata as griddata
 from scipy import mgrid as mgrid
 
@@ -99,7 +92,7 @@ def rot_cross_spec(x, y1, y2, win = None, pad = True, ax = 0):
     
     d = np.diff(x, axis = ax).mean()
     N = y1.shape[ax]
-    if not win in ['boxcar', 'hanning', 'hamming', 'bartlett', 'blackman', 'triang', None]:
+    if not win in ['boxcar', 'hann', 'hamming', 'bartlett', 'blackman', 'triang', None]:
         raise ValueError("Window choice is invalid")
     
     if win != None:
