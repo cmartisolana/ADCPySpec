@@ -1,5 +1,5 @@
 import numpy as np
-from pyspec import spectrum as spec
+from ADCPySpec import spectrum as spec
 
 def test_parseval_1d(rtol=1.e-14, debug=False):
     """ Make sure 1D spectrum satisfied Parseval relation """
@@ -24,11 +24,11 @@ def test_parseval_1d(rtol=1.e-14, debug=False):
             error = np.abs(P_var_phys - P_var_spec)/P_var_phys
 
             if debug:
-                print "N = %i,  dt = %2.5f" %(n,dt)
-                print "Variance in physical space: %5.16f" %P_var_phys
-                print "Variance from spectrum: %5.16f" %P_var_spec
-                print "error = %5.16f" %error
-                print " "
+                print ("N = %i,  dt = %2.5f" %(n,dt))
+                print ("Variance in physical space: %5.16f" %P_var_phys)
+                print ("Variance from spectrum: %5.16f" %P_var_spec)
+                print ("error = %5.16f" %error)
+                print (" ")
 
             assert error<rtol, " *** 1D spectrum Does not satisfy Parseval's relation "
 
@@ -56,11 +56,11 @@ def test_parseval_2d(rtol=1.e-14, debug=False):
             error = np.abs(P_var_phys - P_var_spec)/P_var_phys
 
             if debug:
-                print "N = %i,  dt = %2.5f" %(n,dt)
-                print "Variance in physical space: %5.16f" %P_var_phys
-                print "Variance from spectrum: %5.16f" %P_var_spec
-                print "error = %5.16f" %error
-                print " "
+                print ("N = %i,  dt = %2.5f" %(n,dt))
+                print ("Variance in physical space: %5.16f" %P_var_phys)
+                print ("Variance from spectrum: %5.16f" %P_var_spec)
+                print ("error = %5.16f" %error)
+                print (" ")
 
             assert error<rtol, " *** 2D spectrum Does not satisfy Parseval's relation "
 

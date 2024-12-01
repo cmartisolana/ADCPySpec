@@ -1,13 +1,13 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-from pyspec import spectrum as spec
+from ADCPySpec import spectrum as spec
 
 n, L = 100, 2.
 phi = np.random.randn(n)
 
 phi_spec = spec.Spectrum(phi,L)
-print phi.var()
+print(phi.var())
 
 
 
