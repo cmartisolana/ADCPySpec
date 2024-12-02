@@ -89,8 +89,8 @@ class HelmholtzDecomposition:
             Fp = Cu[i:] * sh + Cv[i:] * ch
             Fs = Cv[i:] * sh + Cu[i:] * ch
 
-            Fpsi[i] = integrate.simps(Fs, s[i:])
-            Fphi[i] = integrate.simps(Fp, s[i:])
+            Fpsi[i] = integrate.simpson(Fs, s[i:])
+            Fphi[i] = integrate.simpson(Fp, s[i:])
 
             Fpsi[Fpsi < 0.] = 0.
             Fphi[Fphi < 0.] = 0.
