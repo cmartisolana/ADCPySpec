@@ -10,6 +10,7 @@ class SpectrumProcessor:
 
         Parameters:
         x (array-like): Independent variable, typically time.
+        dt (float): Sampling interval.
         y1 (array-like): First input signal (optional).
         y2 (array-like): Second input signal (optional, for cross-spectrum).
         win (str): Type of window to use. Default is None.
@@ -63,6 +64,7 @@ class SpectrumProcessor:
         yn = np.concatenate((pads, y, pads), axis=self.ax)
         return yn
 
+
     def compute_cross_spectrum(self):
         """
         Compute the cross-spectrum between two signals.
@@ -112,7 +114,7 @@ class SpectrumProcessor:
             self.y2 = np.rollaxis(self.y2, self.ax, start=0)
 
         # Compute the FFT of both signals
-        fy1, fy2 = map(np.fft.fft, (self.y1, self.y2), (None, None), (0, 0))
+        fy1, fy2 = map(np.fft.rfft, (self.y1, self.y2), (None, None), (0, 0))
         # Apply FFT shift and scale by the degree of freedom weight
         fy1, fy2 = map(np.fft.fftshift, (np.sqrt(dofw) * fy1, np.sqrt(dofw) * fy2))
         # Compute the frequencies corresponding to the FFT output
