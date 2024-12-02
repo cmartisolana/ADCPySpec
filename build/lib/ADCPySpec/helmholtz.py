@@ -161,11 +161,12 @@ class HelmholtzDecomposition:
         dCv = self.diff_central(Cv,s)
         dCv = np.interp(self.k, self.k[1:-1], dCv)
 
-        dCphi_v = self.diff_central(Cphi_v,s)
-        dCphi_v = np.interp(self.k, self.k[1:-1], dCphi_v)
-
         Cpsi_u = 4*Kpsi - Cv + E*Cuv + s * ( 2*dKpsi - dCv)
         Cphi_v = Cpsi_u + Cv - 2*Kpsi
+
+        dCphi_v = self.diff_central(Cphi_v,s)
+        dCphi_v = np.interp(self.k, self.k[1:-1], dCphi_v)
+        
         Cphi_uv = (1/E) * (Cphi_v - Cpsi_u + s * dCphi_v)
 
         Cphi_u = Cu - Cpsi_u
