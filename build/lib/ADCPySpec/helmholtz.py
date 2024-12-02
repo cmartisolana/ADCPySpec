@@ -155,9 +155,18 @@ class HelmholtzDecomposition:
             Kpsi[Kpsi < 0.] = 0.
             Kphi[Kphi < 0.] = 0.
 
-        Cpsi_u = 4*Kpsi - Cv + E*Cuv + s * (self.diff_central(2*Kpsi,s) - self.diff_central(Cv,s))
+        dKpsi = self.diff_central(Kpsi,s)
+        dKpsi = np.interp(self.k, self.k[1:-1], dKpsi)
+
+        dCv = self.diff_central(Cv,s)
+        dCv = np.interp(self.k, self.k[1:-1], dCv)
+
+        dCphi_v = self.diff_central(Cphi_v,s)
+        dCphi_v = np.interp(self.k, self.k[1:-1], dCphi_v)
+
+        Cpsi_u = 4*Kpsi - Cv + E*Cuv + s * ( 2*dKpsi - dCv)
         Cphi_v = Cpsi_u + Cv - 2*Kpsi
-        Cphi_uv = (1/E) * (Cphi_v - Cpsi_u + s * self.diff_central(Cphi_v,s))
+        Cphi_uv = (1/E) * (Cphi_v - Cpsi_u + s * dCphi_v)
 
         Cphi_u = Cu - Cpsi_u
         Cpsi_v = Cv - Cphi_v
