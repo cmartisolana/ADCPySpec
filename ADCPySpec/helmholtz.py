@@ -149,8 +149,8 @@ class HelmholtzDecomposition:
         for i in range(s.size - 1):
             K = Cv[i:] - Cu[i:] + Cuv[i:]*E
 
-            Kpsi[i] = .5 * (Cv[i] + (1/s) * integrate.simpson(K,x=s[i:]))
-            Kphi[i] = .5 * (Cu[i] - (1/s) * integrate.simpson(K,x=s[i:]))
+            Kpsi[i] = .5 * (Cv[i] + (1/s[i]) * integrate.simpson(K,x=s[i:]))
+            Kphi[i] = .5 * (Cu[i] - (1/s[i]) * integrate.simpson(K,x=s[i:]))
 
             Kpsi[Kpsi < 0.] = 0.
             Kphi[Kphi < 0.] = 0.
