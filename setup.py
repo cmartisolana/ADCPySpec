@@ -1,20 +1,25 @@
-from setuptools import setup
+from setuptools import setup, find_packages
 
-def readme():
-    with open('README.md') as f:
-        return f.read()
-
-setup(name='pyspec',
-      version='0.1dev1',
-      description='A pythonian package for spectral\
-              analysis',
-      url='http://github.com/crocha700/pyspec',
-      author='Cesar B Rocha',
-      author_email='crocha@ucsd.edu',
-      license='MIT',
-      packages=['pyspec'],
-      install_requires=[
-          'numpy',
-      ],
-      test_suite = 'nose.collector',
-      zip_safe=False)
+setup(
+    name='ADCPySpec',
+    version='0.1.0',
+    description='A Python package for spectral analysis of ADCP and velocity field data.',
+    author='Cristina Martí',
+    author_email='cmarti@imedea.uib-csic.es',
+    url='https://github.com/cmartisolana/ADCPySpec',
+    packages=find_packages(),
+    install_requires=[
+        'numpy',
+        'scipy',
+        'pytest'
+    ],
+    classifiers=[
+        'Development Status :: 3 - Alpha',
+        'Intended Audience :: Science/Research',
+        'Programming Language :: Python :: 3',
+        'License :: OSI Approved :: MIT License',
+        'Topic :: Scientific/Engineering :: Physics',
+    ],
+    python_requires='>=3.6',
+    include_package_data=True,
+)
