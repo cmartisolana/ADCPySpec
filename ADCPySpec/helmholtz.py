@@ -1,104 +1,78 @@
 import numpy as np
-from numpy import pi,sinh,cosh
-from scipy import integrate
+from scipy.interpolate import griddata
 
-try:
-    import mkl
-    np.use_fastnumpy = True
-except ImportError:
-    pass
+class HelmholtzProcessor:
+    def __init__(self, u, v, x, y, method='linear'):
+        """
+        Initialize the HelmholtzProcessor with velocity field components.
 
-def diff_central(x, y):
-    x0 = x[:-2]
-    x1 = x[1:-1]
-    x2 = x[2:]
-    y0 = y[:-2]
-    y1 = y[1:-1]
-    y2 = y[2:]
-    f = (x2 - x1)/(x2 - x0)
-    return (1-f)*(y2 - y1)/(x2 - x1) + f*(y1 - y0)/(x1 - x0)
+        Parameters:
+        u (array-like): Zonal velocity component.
+        v (array-like): Meridional velocity component.
+        x (array-like): x-coordinates of the velocity field.
+        y (array-like): y-coordinates of the velocity field.
+        method (str, optional): Interpolation method to use ('linear', 'nearest', 'cubic'). Default is 'linear'.
+        """
+        self.u = u
+        self.v = v
+        self.x = x
+        self.y = y
+        self.method = method
 
-def spec_helm_decomp(k,Cu,Cv,GM=False):
+    def interpolate_velocity(self, grid_x, grid_y):
+        """
+        Interpolate the velocity field to a new grid.
 
-    """  it computes the Buhler et al  JFM 2014
-            Helmholtz decomposition. That is,
-            it splits the across-track/along-track
-            KE spectra into rotational and divergent
-            components.
+        Parameters:
+        grid_x (array-like): x-coordinates of the new grid.
+        grid_y (array-like): y-coordinates of the new grid.
 
-    Inputs
-    ==========
-    - k: wavenumber
-    - Cu: spectrum of across-track velocity
-    - Cv: spectrum of along-track velocity
+        Returns:
+        tuple: Interpolated zonal and meridional velocity components (u_interp, v_interp).
+        """
+        # Flatten the input coordinates and velocity components
+        points = np.array([self.x.flatten(), self.y.flatten()]).T
+        u_values = self.u.flatten()
+        v_values = self.v.flatten()
 
-    Outputs
-    ==========
-    - Cpsi: rotational component of the KE spectrum
-    - Cphi: divergent component of the KE spectrum
+        # Create a meshgrid for the new coordinates
+        grid_x, grid_y = np.meshgrid(grid_x, grid_y)
+        grid_points = np.array([grid_x.flatten(), grid_y.flatten()]).T
 
-                                                  """
-    dk = k[1]-k[0]
-    s = np.log(k)
+        # Interpolate the zonal (u) and meridional (v) velocity components
+        u_interp = griddata(points, u_values, grid_points, method=self.method).reshape(grid_x.shape)
+        v_interp = griddata(points, v_values, grid_points, method=self.method).reshape(grid_y.shape)
 
-    Fphi = np.zeros_like(Cu)
-    Fpsi = np.zeros_like(Cu)
-    Cphi = np.zeros_like(Cu)
-    Cpsi = np.zeros_like(Cu)
+        return u_interp, v_interp
 
-    # assume GM for decomposing into wave and vortex
-    if GM:
-        gm = np.load("/Users/crocha/Projects/dp_spectra/GM/gm_omega_star.npz")
-        f2omg2 = gm['rgm']
-        ks = gm['k']*1.e3
+    def compute_divergence(self):
+        """
+        Compute the divergence of the velocity field.
 
-    for i in range(s.size-1):
+        Returns:
+        array-like: Divergence of the velocity field.
+        """
+        # Compute the partial derivatives of u and v with respect to x and y
+        du_dx = np.gradient(self.u, axis=1)
+        dv_dy = np.gradient(self.v, axis=0)
 
-        ds = np.diff(s[i:])
+        # Divergence is the sum of the partial derivatives
+        divergence = du_dx + dv_dy
 
-        sh = sinh(s[i]-s[i:])
-        ch = cosh(s[i]-s[i:])
+        return divergence
 
-        # the function to integrate
-        Fp = Cu[i:]*sh + Cv[i:]*ch
-        Fs = Cv[i:]*sh + Cu[i:]*ch
+    def compute_vorticity(self):
+        """
+        Compute the vorticity of the velocity field.
 
-        # integrate using Simpson's rule
-        Fpsi[i] = integrate.simpson(Fs,x=s[i:])
-        Fphi[i] = integrate.simpson(Fp,x=s[i:])
+        Returns:
+        array-like: Vorticity of the velocity field.
+        """
+        # Compute the partial derivatives of u and v with respect to y and x
+        dv_dx = np.gradient(self.v, axis=1)
+        du_dy = np.gradient(self.u, axis=0)
 
-        # zero out unphysical values
-        Fpsi[Fpsi < 0.] = 0.
-        Fphi[Fphi < 0.] = 0.
+        # Vorticity is the difference between the partial derivatives
+        vorticity = dv_dx - du_dy
 
-    # compute rotational and divergent components
-    Cpsi = Fpsi - Fphi + Cu
-    Cphi = Fphi - Fpsi + Cv
-
-    if GM:
-
-        f2omg2i = np.interp(k,ks,f2omg2)
-
-        Cv_w = f2omg2i*Fphi - Fpsi + Cv
-        Cv_v = Cv - Cv_w
-    
-        kdkromg = diff_central(ks, f2omg2)
-        kdkromg  = np.interp(k,ks[1:-1],kdkromg)
-
-        dFphi =  diff_central(k, Fphi)
-        #dFphi = np.gradient(Fphi,k)
-        dFphi  = np.interp(k,k[1:-1],dFphi.real)
-        E_w = Fphi - k*dFphi
-
-        Cu_w = -k*kdkromg*Fphi + f2omg2i*(-Fpsi+Cv) + Fphi
-        Cu_v = Cu - Cu_w
-
-        Cb_w = E_w - (Cu_w + Cv_w)/2.
-
-        return Cpsi,Cphi, Cu_w,Cv_w, Cu_v,Cv_v, E_w, Cb_w
-
-    else:
-        return Cpsi,Cphi
-
-
-
+        return vorticity

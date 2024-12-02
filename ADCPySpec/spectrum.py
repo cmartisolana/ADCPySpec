@@ -1,508 +1,212 @@
 import numpy as np
-from numpy import pi
-from scipy.special import gammainc
-from scipy import signal
-try:
-    import mkl
-    np.use_fastnumpy = True
-except ImportError:
-    pass
+from scipy.signal import detrend as sci_detrend
+from scipy.signal import windows as windows
 
-class Spectrum(object):
-    """ A class that represents a single realization of
-            the one-dimensional spectrum  of a given field phi """
+class SpectrumProcessor:
+    def __init__(self, x, y1=None, y2=None, win=None, pad=True, ax=0):
+        """
+        Initialize the SpectrumProcessor with input signals.
 
-    def __init__(self,phi,dt):
+        Parameters:
+        x (array-like): Independent variable, typically time.
+        y1 (array-like): First input signal (optional).
+        y2 (array-like): Second input signal (optional, for cross-spectrum).
+        win (str): Type of window to use. Default is None.
+        pad (bool): Whether to zero pad the signals. Default is True.
+        ax (int): Axis along which to calculate. Default is 0.
+        """
+        self.x = x
+        self.y1 = y1
+        self.y2 = y2
+        self.win = win
+        self.pad = pad
+        self.ax = ax
 
-        self.phi = phi      # field to be analyzed
-        self.dt = dt        # sampling interval
-        self.n = phi.size
+    def zero_pad(self, y):
+        """
+        Pads the beginning and end of y along the specified axis with zeros.
 
-        win =  np.hanning(self.n)
-        win =  np.sqrt(self.n/(win**2).sum())*win
+        Parameters:
+        y (array-like): Input signal to be padded.
 
-        self.phi *= win
-
-        # test if n is even
-        if (self.n%2):
-            self.neven = False
+        Returns:
+        array-like: Zero-padded signal.
+        """
+        # Determine the length of the input along the specified axis
+        N = y.shape[self.ax]
+        # Calculate the next power of 2 for efficient FFT computation
+        N2 = 2**(np.ceil(np.log2(N)))
+        # Calculate the amount of padding needed on each side
+        Npad = np.ceil(0.5 * (N2 - N))
+        # Recalculate padding if the initial estimate exceeds the next power of 2
+        if 2 * Npad + N > N2:
+            N2 = 2**(np.ceil(np.log2(N + 2 * Npad)))
+            Npad = np.ceil(0.5 * (N2 - N))
+        # Create padding arrays based on the dimensions of the input
+        if self.ax == 0 and y.ndim == 1:
+            pads = np.zeros((int(Npad),))
+        elif self.ax == 0 and y.ndim >= 2:
+            pads = np.zeros((int(Npad),) + y.shape[1:])
+        elif self.ax == 1 and y.ndim == 2:
+            pads = np.zeros((len(y), int(Npad)))
+        elif self.ax == 1 and y.ndim >= 3:
+            pads = np.zeros((len(y), int(Npad)) + y.shape[2:])
+        elif self.ax == 2 and y.ndim == 3:
+            pads = np.zeros((len(y), y.shape[1], int(Npad)))
+        elif self.ax == 2 and y.ndim == 4:
+            pads = np.zeros((len(y), y.shape[1], int(Npad)) + y.shape[3:])
         else:
-            self.neven = True
+            raise ValueError("Too many dimensions to pad or wrong axis choice.")
 
-        # calculate frequencies
-        self.calc_freq()
+        # Concatenate the padding arrays to the beginning and end of the input
+        yn = np.concatenate((pads, y, pads), axis=self.ax)
+        return yn
 
-        # calculate spectrum
-        self.calc_spectrum()
+    def compute_cross_spectrum(self):
+        """
+        Compute the cross-spectrum between two signals.
 
-        # calculate total var
-        self.calc_var()
+        Returns:
+        tuple: Frequencies, inner and outer cross-spectra, and other spectral properties.
+        """
+        if self.y1 is None or self.y2 is None:
+            raise ValueError("Both y1 and y2 must be provided for cross-spectrum calculation.")
 
-    def calc_freq(self):
-        """ calculate array of spectral variable (frequency or
-                wavenumber) in cycles per unit of L """
+        # Zero pad the signals if specified
+        if self.pad:
+            self.y1 = self.zero_pad(self.y1)
+            self.y2 = self.zero_pad(self.y2)
 
-        self.df = 1./(self.n*self.dt)
+        # Calculate the sampling interval (assumes uniform spacing)
+        d = np.diff(self.x, axis=self.ax).mean()
+        # Determine the length of the input along the specified axis
+        N = self.y1.shape[self.ax]
 
-        if self.neven:
-            self.f = self.df*np.arange(self.n/2+1)
+        # Validate the window choice
+        if self.win not in ['boxcar', 'hanning', 'hamming', 'bartlett', 'blackman', 'triang', None]:
+            raise ValueError("Window choice is invalid")
+
+        # Apply the window to the signals if specified
+        if self.win is not None:
+            # Get the window function from scipy.signal.windows
+            win = getattr(windows, self.win)(N, sym=False)
+            # Calculate the degree of freedom weight
+            dofw = len(win) / np.sum(win**2)
+            # Reshape the window to match the dimensions of the input signals
+            win = win.reshape((N,) + (1,) * (self.y1.ndim - 1))
+            # Roll the axis if necessary to match the input axis
+            if self.ax != 0 and self.ax != -1:
+                win = np.rollaxis(win, 0, start=self.ax + 1)
+            elif self.ax != 0 and self.ax == -1:
+                win = np.rollaxis(win, 0, start=self.y1.ndim)
+            # Apply the window to both input signals
+            self.y1 *= win
+            self.y2 *= win
         else:
-            self.f = self.df*np.arange( (self.n-1)/2.  + 1 )
+            dofw = 1.0
 
-    def calc_spectrum(self):
-        """ compute the 1d spectrum of a field phi """
+        # Roll the axis of the input signals if necessary
+        if self.ax != 0:
+            self.y1 = np.rollaxis(self.y1, self.ax, start=0)
+            self.y2 = np.rollaxis(self.y2, self.ax, start=0)
 
-        self.phih = np.fft.rfft(self.phi)
+        # Compute the FFT of both signals
+        fy1, fy2 = map(np.fft.fft, (self.y1, self.y2), (None, None), (0, 0))
+        # Apply FFT shift and scale by the degree of freedom weight
+        fy1, fy2 = map(np.fft.fftshift, (np.sqrt(dofw) * fy1, np.sqrt(dofw) * fy2))
+        # Compute the frequencies corresponding to the FFT output
+        freqs = np.fft.fftshift(np.fft.fftfreq(N, d))
 
-        # the factor of 2 comes from the symmetry of the Fourier coeffs
-        self.spec = 2.*(self.phih*self.phih.conj()).real / self.df /\
-                self.n**2
+        # Calculate the power spectral density of each signal
+        ipy1 = (d / N) * np.abs(fy1)**2
+        ipy2 = (d / N) * np.abs(fy2)**2
+        # Calculate the cross-spectrum between the two signals
+        ipy1y2 = (d / N) * (fy1.conj() * fy2)
+        # Calculate the phase difference between the two signals
+        iphase_y1y2 = np.arctan2(-ipy1y2.imag, ipy1y2.real)
 
-        # the zeroth frequency should be counted only once
-        self.spec[0] = self.spec[0]/2.
-        if self.neven:
-            self.spec[-1] = self.spec[-1]/2.
+        # Roll the axis back to the original position if necessary
+        if self.ax != 0:
+            ipy1y2 = np.rollaxis(ipy1y2, 0, start=self.ax)
+            iphase_y1y2 = np.rollaxis(iphase_y1y2, 0, start=self.ax)
 
-    def calc_var(self):
-        """ Compute total variance from spectrum """
-        self.var = self.df*self.spec[1:].sum()  # do not consider zeroth frequency
+        # Return the computed frequencies, cross-spectrum, and other spectral properties
+        return freqs, ipy1y2, ipy1, ipy2, iphase_y1y2, dofw
 
-class TWODimensional_spec(object):
-    """ A class that represent a two dimensional spectrum
-            for real signals """
+    def calc_ispec(self, k, l, E, ndim=2):
+        """
+        Calculates the azimuthally-averaged spectrum.
 
-    def __init__(self,phi,d1,d2,detrend=True):
+        Parameters:
+        k (array-like): Wavenumber in the x-direction.
+        l (array-like): Wavenumber in the y-direction.
+        E (array-like): Two-dimensional spectrum.
+        ndim (int): Number of dimensions. Default is 2.
 
-        self.phi = phi  # two dimensional real field
-        self.d1 = d1
-        self.d2 = d2
-        self.n2,self.n1 = phi.shape
-        self.L1 = d1*self.n1
-        self.L2 = d2*self.n2
+        Returns:
+        tuple: Radial wavenumber and azimuthally-averaged spectrum.
+        """
+        # Calculate the wavenumber spacing in both directions
+        dk = np.abs(k[2] - k[1])
+        dl = np.abs(l[2] - l[1])
 
-        if detrend:
-            self.phi = signal.detrend(self.phi,axis=(-1),type='linear')
-            self.phi = signal.detrend(self.phi,axis=(-2),type='linear')
+        # Create a meshgrid of wavenumber values
+        k, l = np.meshgrid(k, l)
+        # Compute the magnitude of the wavenumber
+        wv = np.sqrt(k**2 + l**2)
+
+        # Determine the maximum wavenumber value to consider
+        if k.max() > l.max():
+            kmax = l.max()
         else:
-            pass
-
-        win1 =  np.hanning(self.n1)
-        win1 =  np.sqrt(self.n1/(win1**2).sum())*win1
-        win2 =  np.hanning(self.n2)
-        win2 =  np.sqrt(self.n2/(win2**2).sum())*win2
-
-        win = win1[np.newaxis,...]*win2[...,np.newaxis]
-
-        self.phi *= win
-
-        # test eveness
-        if (self.n1 % 2):
-            self.n1even = False
-        else: self.n1even = True
-
-        if (self.n2 % 2):
-            self.n2even = False
-        else: self.n2even = True
-
-        # calculate frequencies
-        self.calc_freq()
-
-        # calculate spectrum
-        self.calc_spectrum()
-
-        # calculate total var
-        self.calc_var()
-
-        # calculate isotropic spectrum
-        #self.calc_ispec()
-
-        #self.ki,self.ispec =  calc_ispec(self.k1,self.k2,self.spec)
-
-        self.spec =  np.fft.fftshift(self.spec,axes=0)
-
-    def calc_freq(self):
-        """ calculate array of spectral variable (frequency or
-                wavenumber) in cycles per unit of L """
-
-        # wavenumber one (equals to dk1 and dk2)
-        self.dk1 = 1./self.L1
-        self.dk2 = 1./self.L2
-
-        # wavenumber grids
-        self.k2 = self.dk2*np.append( np.arange(0.,self.n2/2), \
-                  np.arange(-self.n2/2,0.) )
-        self.k1 = self.dk1*np.arange(0.,self.n1/2+1)
-
-        self.kk1,self.kk2 = np.meshgrid(self.k1,self.k2)
-
-        self.kk1 = np.fft.fftshift(self.kk1,axes=0)
-        self.kk2 = np.fft.fftshift(self.kk2,axes=0)
-        self.kappa2 = self.kk1**2 + self.kk2**2
-        self.kappa = np.sqrt(self.kappa2)
-
-
-    def calc_spectrum(self):
-        """ calculates the spectrum """
-        self.phih = np.fft.rfft2(self.phi)
-        self.spec = 2.*(self.phih*self.phih.conj()).real/ (self.dk1*self.dk2)\
-                / (self.n1*self.n2)**2
-
-    def calc_var(self):
-        """ compute variance of p from Fourier coefficients ph """
-        self.var_dens = np.fft.fftshift(self.spec.copy(),axes=0)
-        # only half of coefs [0] and [nx/2+1] due to symmetry in real fft2
-
-        if self.n1even:
-            self.var_dens[:,0],self.var_dens[:,-1] = self.var_dens[:,0]/2.,\
-                    self.var_dens[:,-1]/2.
-            self.var = self.var_dens.sum()*self.dk1*self.dk2
-        else:
-            self.var_dens[:,0],self.var_dens[:,-1] = self.var_dens[:,0]/2.,\
-                    self.var_dens[:,-1]
-            self.var = self.var_dens.sum()*self.dk1*self.dk2
-
-
-class THREEDimensional_spec(object):
-    """ A class that represent a three dimensional spectrum
-            for real signals """
-
-    def __init__(self,phi,d1,d2,d3):
-
-        self.phi = phi
-        self.d1 = d1
-        self.d2 = d2
-        self.d3 = d3
-        self.n2,self.n1, self.n3 = phi.shape
-        self.L1 = d1*self.n1
-        self.L2 = d2*self.n2
-        self.L3 = d3*self.n3
-
-        win1 =  np.hanning(self.n1)
-        win1 =  (self.n1/(win1**2).sum())*win1
-        win2 =  np.hanning(self.n2)
-        win2 =  (self.n2/(win2**2).sum())*win2
-        win3 =  np.hanning(self.n3)
-        win3 =  (self.n3/(win3**2).sum())*win3
-
-        win = win1[np.newaxis]*win2[...,np.newaxis]
-        win = win[...,np.newaxis]*win3[np.newaxis,np.newaxis]
-
-        self.phi = self.phi*win
-
-        # calculate frequencies
-        self.calc_freq()
-
-        # calculate spectrum
-        self.calc_spectrum()
-
-        # the isotropic spectrum
-        #self.ki,self.ispec =  calc_ispec(self.k1,self.k2,self.spec,ndim=3)
-
-
-    def calc_freq(self):
-        """ calculate array of spectral variable (frequency or
-                wavenumber) in cycles per unit of L """
-
-        # wavenumber one (equals to dk1 and dk2)
-        self.dk1 = 1./self.L1
-        self.dk2 = 1./self.L2
-        self.dk3 = 1./self.L3
-
-        # wavenumber grids
-        #self.k1 = self.dk1*np.append( np.arange(0.,self.n1/2), \
-        #          np.arange(-self.n1/2+1,0.) )
-        self.k1 = np.fft.fftfreq(self.n1, d=self.d1)
-        self.k2 = np.fft.fftfreq(self.n2, d=self.d2)
-        #self.k2 = self.dk2*np.append( np.arange(0.,self.n2/2), \
-        #      np.arange(-self.n2/2,0.) )
-        self.k3 = self.dk3*np.arange(0.,self.n3/2+1)
-
-        self.kk1,self.kk2,self.kk3 = np.meshgrid(self.k1,self.k2,self.k3)
-
-        self.kk1 = np.fft.fftshift(self.kk1,axes=0)
-        self.kk2 = np.fft.fftshift(self.kk2,axes=0)
-        self.kk3 = np.fft.fftshift(self.kk3,axes=0)
-
-        self.kappa2 = self.kk1**2 + self.kk2**2 + self.kk3**2
-        self.kappa = np.sqrt(self.kappa2)
-
-    def calc_spectrum(self):
-        """ calculates the spectrum """
-        self.phih = np.fft.rfftn(self.phi,axes=(0,1,2))
-        self.spec = 2.*(self.phih*self.phih.conj()).real/(self.dk1*self.dk2*self.dk3)\
-                / (self.n1*self.n2*self.n3)**2
-
-# utilities
-def spec_error(E,sn,ci=.95):
-
-    """ Computes confidence interval for one-dimensional spectral
-        estimate E.
-
-        Parameters
-        ===========
-        - sn is the number of spectral realizations;
-                it can be either an scalar or an array of size(E)
-        - ci = .95 for 95 % confidence interval
-
-        Output
-        ==========
-        lower (El) and upper (Eu) bounds on E """
-
-    dbin = .005
-    yN = np.arange(0,2.+dbin,dbin)
-
-    El, Eu = np.empty_like(E), np.empty_like(E)
-
-    try:
-        n = sn.size
-    except AttributeError:
-        n = 0
-
-    if n:
-
-        assert n == E.size, " *** sn has different size than E "
-
-        for i in range(n):
-            yNl,yNu = yNlu(sn[i],yN=yN,ci=ci)
-            El[i] = E[i]/yNl
-            Eu[i] = E[i]/yNu
-
-    else:
-        yNl,yNu = yNlu(sn,yN=yN,ci=ci)
-        El = E/yNl
-        Eu = E/yNu
-
-    return El, Eu
-
-
-# for llc output only; this is temporary
-def spec_est(A,d,axis=2,window=True,detrend=True, prewhiten=False):
-
-    l1,l2,l3,l4 = A.shape
-
-    if axis==2:
-        l = l3
-        if prewhiten:
-            if l3>1:
-                _,A,_ = np.gradient(A,d,d,1.)
-            else:
-                _,A = np.gradient(A.squeeze(),d,d)
-                A = A[...,np.newaxis]
-        if detrend:
-            A = signal.detrend(A,axis=axis,type='linear')
-        if window:
-            win = np.hanning(l)
-            win = (l/(win**2).sum())*win
-            win = win[np.newaxis,np.newaxis,:,np.newaxis]
-        else:
-            win = np.ones(l)[np.newaxis,np.newaxis,:,np.newaxis]
-    elif axis==1:
-        l = l2
-        if prewhiten:
-            if l3 >1:
-                A,_,_ = np.gradient(A,d,d,1.)
-            else:
-                A,_ = np.gradient(A.squeeze(),d,d)
-                A = A[...,np.newaxis]
-        if detrend:
-            A = signal.detrend(A,axis=1,type='linear')
-        if window:
-            win = np.hanning(l)
-            win = (l/(win**2).sum())*win
-            win = win[np.newaxis,...,np.newaxis,np.newaxis]
-        else:
-            win = np.ones(l)[np.newaxis,...,np.newaxis,np.newaxis]
-
-
-    df = 1./(d*l)
-    f = np.arange(0,l/2+1)*df
-
-    Ahat = np.fft.rfft(win*A,axis=axis)
-    Aabs = 2 * (Ahat*Ahat.conjugate()) / l
-
-    if prewhiten:
-
-        if axis==1:
-            fd = 2*np.pi*f[np.newaxis,:, np.newaxis]
-        else:
-            fd = 2*np.pi*f[...,np.newaxis,np.newaxis]
-
-        Aabs = Aabs/(fd**2)
-        Aabs[0,0] = 0.
-
-    return Aabs,f
-
-# for llc output only; this is temporary
-#def spec_est(A,d,axis=1,window=True,detrend=True, prewhiten=False):
-#
-#    l1,l2,l3 = A.shape
-#
-#    if axis==1:
-#        l = l2
-#        if prewhiten:
-#            if l3>1:
-#                _,A,_ = np.gradient(A,d,d,1.)
-#            else:
-#                _,A = np.gradient(A.squeeze(),d,d)
-#                A = A[...,np.newaxis]
-#        if detrend:
-#            A = signal.detrend(A,axis=1,type='linear')
-#        if window:
-#            win = np.hanning(l)
-#            win = (l/(win**2).sum())*win
-#            win = win[np.newaxis,:,np.newaxis]
-#        else:
-#            win = np.ones(l)[np.newaxis,:,np.newaxis]
-#    else:
-#        l = l1
-#        if prewhiten:
-#            if l3 >1:
-#                A,_,_ = np.gradient(A,d,d,1.)
-#            else:
-#                A,_ = np.gradient(A.squeeze(),d,d)
-#                A = A[...,np.newaxis]
-#        if detrend:
-#            A = signal.detrend(A,axis=0,type='linear')
-#        if window:
-#            win = np.hanning(l)
-#            win = (l/(win**2).sum())*win
-#            win = win[...,np.newaxis,np.newaxis]
-#        else:
-#            win = np.ones(l)[...,np.newaxis,np.newaxis]
-#
-#    df = 1./(d*l)
-#    f = np.arange(0,l/2+1)*df
-#
-#    Ahat = np.fft.rfft(win*A,axis=axis)
-#    Aabs = 2 * (Ahat*Ahat.conjugate()) / l
-#
-#    if prewhiten:
-#
-#        if axis==1:
-#            fd = 2*np.pi*f[np.newaxis,:, np.newaxis]
-#        else:
-#            fd = 2*np.pi*f[...,np.newaxis,np.newaxis]
-#
-#
-#        Aabs = Aabs/(fd**2)
-#        Aabs[0,0] = 0.
-#
-#    return Aabs,f
-
-def yNlu(sn,yN,ci):
-    """ compute yN[l] yN[u], that is, the lower and
-                upper limit of yN """
-
-    # cdf of chi^2 dist. with 2*sn DOF
-    cdf = gammainc(sn,sn*yN)
-
-    # indices that delimit the wedge of the conf. interval
-    fl = np.abs(cdf - ci).argmin()
-    fu = np.abs(cdf - 1. + ci).argmin()
-
-    return yN[fl],yN[fu]
-
-
-def avg_per_decade(k,E,nbins = 10):
-    """ Averages the spectra with nbins per decade
-
-        Parameters
-        ===========
-        - E is the spectrum
-        - k is the original wavenumber array
-        - nbins is the number of bins per decade
-
-        Output
-        ==========
-        - ki: the wavenumber for the averaged spectrum
-        - Ei: the averaged spectrum """
-
-    dk = 1./nbins
-    logk = np.log10(k)
-
-    logki = np.arange(np.floor(logk.min()),np.ceil(logk.max())+dk,dk)
-    Ei = np.zeros_like(logki)
-
-    for i in range(logki.size):
-
-        f = (logk>logki[i]-dk/2) & (logk<logki[i]+dk/2)
-
-        if f.sum():
-            Ei[i] = E[f].mean()
-        else:
-            Ei[i] = 0.
-
-    ki = 10**logki
-    fnnan = np.nonzero(Ei)
-    Ei = Ei[fnnan]
-    ki = ki[fnnan]
-
-    return ki,Ei
-
-def calc_ispec(k,l,E,ndim=2):
-    """ Calculates the azimuthally-averaged spectrum
-
-        Parameters
-        ===========
-        - E is the two-dimensional spectrum
-        - k is the wavenumber is the x-direction
-        - l is the wavenumber in the y-direction
-
-        Output
-        ==========
-        - kr: the radial wavenumber
-        - Er: the azimuthally-averaged spectrum """
-
-    dk = np.abs(k[2]-k[1])
-    dl = np.abs(l[2]-l[1])
-
-    k, l = np.meshgrid(k,l)
-
-    wv = np.sqrt(k**2+l**2)
-
-    if k.max()>l.max():
-        kmax = l.max()
-    else:
-        kmax = k.max()
-
-    if ndim==3:
-        nl, nk, nomg = E.shape
-    elif ndim==2:
-        nomg = 1
-
-    dkr = np.sqrt(dk**2 + dl**2)
-    kr =  np.arange(dkr/2.,kmax+dkr/2.,dkr)
-    Er = np.zeros((kr.size,nomg))
-
-
-    for i in range(kr.size):
-
-        fkr =  (wv>=kr[i]-dkr/2) & (wv<=kr[i]+dkr/2)
-        dth = np.pi / (fkr.sum()-1)
-        if ndim==2:
-            Er[i] = (E[fkr]*(wv[fkr]*dth)).sum()
-        elif ndim==3:
-            Er[i] = (E[fkr]*(wv[fkr]*dth)).sum(axis=(0,1))
-
-
-    return kr, Er.squeeze()
-
-def spectral_slope(k,E,kmin,kmax,stdE):
-    ''' compute spectral slope in log space in
-        a wavenumber subrange [kmin,kmax],
-        m: spectral slope; mm: uncertainty'''
-
-    fr = np.where((k>=kmin)&(k<=kmax))
-
-    ki = np.matrix((np.log10(k[fr]))).T
-    Ei = np.matrix(np.log10(np.real(E[fr]))).T
-    dd = np.matrix(np.eye(ki.size)*((np.abs(np.log10(stdE)))**2))
-
-    G = np.matrix(np.append(np.ones((ki.size,1)),ki,axis=1))
-    Gg = ((G.T*G).I)*G.T
-    m = Gg*Ei
-    mm = np.sqrt(np.array(Gg*dd*Gg.T)[1,1])
-    yfit = np.array(G*m)
-    m = np.array(m)[1]
-
-    return m, mm
+            kmax = k.max()
+
+        # Calculate the radial wavenumber bins
+        dkr = np.sqrt(dk**2 + dl**2)
+        kr = np.arange(dkr / 2., kmax + dkr / 2., dkr)
+        Er = np.zeros((kr.size,))
+
+        # Loop through each radial wavenumber bin and calculate the average energy
+        for i in range(kr.size):
+            fkr = (wv >= kr[i] - dkr / 2) & (wv <= kr[i] + dkr / 2)
+            dth = np.pi / (fkr.sum() - 1)  # Angular spacing
+            if ndim == 2:
+                Er[i] = (E[fkr] * (wv[fkr] * dth)).sum()  # Sum energy in each bin
+            elif ndim == 3:
+                Er[i] = (E[fkr] * (wv[fkr] * dth)).sum(axis=(0, 1))
+
+        # Return the radial wavenumber and the azimuthally-averaged spectrum
+        return kr, Er.squeeze()
+
+    def spectral_slope(self, k, E, kmin, kmax, stdE):
+        """
+        Compute spectral slope in log space in a wavenumber subrange [kmin, kmax].
+
+        Parameters:
+        k (array-like): Wavenumber values.
+        E (array-like): Spectrum values.
+        kmin (float): Minimum wavenumber for slope calculation.
+        kmax (float): Maximum wavenumber for slope calculation.
+        stdE (float): Standard error of the spectrum.
+
+        Returns:
+        tuple: Spectral slope and uncertainty.
+        """
+        # Find the indices of the wavenumber range for slope calculation
+        fr = np.where((k >= kmin) & (k <= kmax))
+
+        # Convert the wavenumber and spectrum to log space
+        ki = np.matrix((np.log10(k[fr]))).T
+        Ei = np.matrix(np.log10(np.real(E[fr]))).T
+        # Create the diagonal error matrix
+        dd = np.matrix(np.eye(ki.size) * ((np.abs(np.log10(stdE)))**2))
+
+        # Set up the linear system to solve for the slope
+        G = np.matrix(np.append(np.ones((ki.size, 1)), ki, axis=1))
+        Gg = ((G.T * G).I) * G.T  # Pseudo-inverse
+        m = Gg * Ei  # Solve for slope and intercept
+        mm = np.sqrt(np.array(Gg * dd * Gg.T)[1, 1])  # Calculate uncertainty
+        m = np.array(m)[1]  # Extract the slope value
+
+        # Return the spectral slope and its uncertainty
+        return m, mm
