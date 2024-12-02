@@ -1,6 +1,7 @@
 import numpy as np
 from scipy.signal import detrend as sci_detrend
 from scipy.signal import windows as windows
+from scipy.special import gammainc
 
 class SpectrumProcessor:
     def __init__(self, x, y1=None, y2=None, win=None, pad=True, ax=0):
@@ -83,7 +84,7 @@ class SpectrumProcessor:
         N = self.y1.shape[self.ax]
 
         # Validate the window choice
-        if self.win not in ['boxcar', 'hanning', 'hamming', 'bartlett', 'blackman', 'triang', None]:
+        if self.win not in ['boxcar', 'hann', 'hamming', 'bartlett', 'blackman', 'triang', None]:
             raise ValueError("Window choice is invalid")
 
         # Apply the window to the signals if specified
@@ -118,65 +119,78 @@ class SpectrumProcessor:
         freqs = np.fft.fftshift(np.fft.fftfreq(N, d))
 
         # Calculate the power spectral density of each signal
-        ipy1 = (d / N) * np.abs(fy1)**2
-        ipy2 = (d / N) * np.abs(fy2)**2
+        py1 = (d / N) * np.abs(fy1)**2
+        py2 = (d / N) * np.abs(fy2)**2
         # Calculate the cross-spectrum between the two signals
-        ipy1y2 = (d / N) * (fy1.conj() * fy2)
+        py1y2 = (d / N) * (fy1.conj() * fy2)
+
+        cy1y2 = (d/N)*( fy1.real*fy2.real + fy1.imag*fy2.imag ) # coincident spectrum
+        qy1y2 = (d/N)*( fy1.real*fy2.imag - fy2.real*fy1.imag ) # quadrature spectrum
+        
+        ay1y2 = np.sqrt( cy1y2**2 + qy1y2**2 ) # cross amplitude
         # Calculate the phase difference between the two signals
-        iphase_y1y2 = np.arctan2(-ipy1y2.imag, ipy1y2.real)
+        phase_y1y2 = np.arctan2(-py1y2.imag, py1y2.real)
 
         # Roll the axis back to the original position if necessary
         if self.ax != 0:
-            ipy1y2 = np.rollaxis(ipy1y2, 0, start=self.ax)
-            iphase_y1y2 = np.rollaxis(iphase_y1y2, 0, start=self.ax)
+            py1y2 = np.rollaxis(py1y2, 0, start=self.ax)
+            phase_y1y2 = np.rollaxis(phase_y1y2, 0, start=self.ax)
 
         # Return the computed frequencies, cross-spectrum, and other spectral properties
-        return freqs, ipy1y2, ipy1, ipy2, iphase_y1y2, dofw
+        return freqs, py1y2, py1, py2, cy1y2, qy1y2, ay1y2, phase_y1y2, dofw
+    
+    def yNlu(sn,yN,ci):
+        """ compute yN[l] yN[u], that is, the lower and
+                    upper limit of yN """
 
-    def calc_ispec(self, k, l, E, ndim=2):
-        """
-        Calculates the azimuthally-averaged spectrum.
+        # cdf of chi^2 dist. with 2*sn DOF
+        cdf = gammainc(sn,sn*yN)
 
-        Parameters:
-        k (array-like): Wavenumber in the x-direction.
-        l (array-like): Wavenumber in the y-direction.
-        E (array-like): Two-dimensional spectrum.
-        ndim (int): Number of dimensions. Default is 2.
+        # indices that delimit the wedge of the conf. interval
+        fl = np.abs(cdf - ci).argmin()
+        fu = np.abs(cdf - 1. + ci).argmin()
 
-        Returns:
-        tuple: Radial wavenumber and azimuthally-averaged spectrum.
-        """
-        # Calculate the wavenumber spacing in both directions
-        dk = np.abs(k[2] - k[1])
-        dl = np.abs(l[2] - l[1])
+        return yN[fl],yN[fu]
 
-        # Create a meshgrid of wavenumber values
-        k, l = np.meshgrid(k, l)
-        # Compute the magnitude of the wavenumber
-        wv = np.sqrt(k**2 + l**2)
+    def spec_error(E,sn,ci=.95):
 
-        # Determine the maximum wavenumber value to consider
-        if k.max() > l.max():
-            kmax = l.max()
+        """ Computes confidence interval for one-dimensional spectral
+            estimate E.
+
+            Parameters
+            ===========
+            - sn is the number of spectral realizations;
+                    it can be either an scalar or an array of size(E)
+            - ci = .95 for 95 % confidence interval
+
+            Output
+            ==========
+            lower (El) and upper (Eu) bounds on E """
+
+        dbin = .005
+        yN = np.arange(0,2.+dbin,dbin)
+
+        El, Eu = np.empty_like(E), np.empty_like(E)
+
+        try:
+            n = sn.size
+        except AttributeError:
+            n = 0
+
+        if n:
+            assert n == E.size, " *** sn has different size than E "
+
+            for i in range(n):
+                yNl,yNu = yNlu(sn[i],yN=yN,ci=ci)
+                El[i] = E[i]/yNl
+                Eu[i] = E[i]/yNu
+
         else:
-            kmax = k.max()
+            yNl,yNu = yNlu(sn,yN=yN,ci=ci)
+            El = E/yNl
+            Eu = E/yNu
 
-        # Calculate the radial wavenumber bins
-        dkr = np.sqrt(dk**2 + dl**2)
-        kr = np.arange(dkr / 2., kmax + dkr / 2., dkr)
-        Er = np.zeros((kr.size,))
-
-        # Loop through each radial wavenumber bin and calculate the average energy
-        for i in range(kr.size):
-            fkr = (wv >= kr[i] - dkr / 2) & (wv <= kr[i] + dkr / 2)
-            dth = np.pi / (fkr.sum() - 1)  # Angular spacing
-            if ndim == 2:
-                Er[i] = (E[fkr] * (wv[fkr] * dth)).sum()  # Sum energy in each bin
-            elif ndim == 3:
-                Er[i] = (E[fkr] * (wv[fkr] * dth)).sum(axis=(0, 1))
-
-        # Return the radial wavenumber and the azimuthally-averaged spectrum
-        return kr, Er.squeeze()
+        return El, Eu
 
     def spectral_slope(self, k, E, kmin, kmax, stdE):
         """
