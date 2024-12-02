@@ -141,6 +141,8 @@ class HelmholtzDecomposition:
 
         E = (Eu2 - Ev2) / Euv
 
+        print(E)
+
         if self.GM:
             gm_data = np.load(self.gm_file_path)
             f2omg2 = gm_data['rgm']
@@ -173,4 +175,4 @@ class HelmholtzDecomposition:
         Cpsi_v = Cv - Cphi_v
         Cpsi_uv = Cuv - Cphi_uv
 
-        return Cpsi_u[s],Cphi_u,Cpsi_v,Cphi_v,Cpsi_uv,Cphi_uv
+        return Cpsi_u,Cphi_u,Cpsi_v,Cphi_v,Cpsi_uv,Cphi_uv
