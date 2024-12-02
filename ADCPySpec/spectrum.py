@@ -114,7 +114,7 @@ class SpectrumProcessor:
             self.y2 = np.rollaxis(self.y2, self.ax, start=0)
 
         # Compute the FFT of both signals
-        fy1, fy2 = map(np.fft.rfft, (self.y1, self.y2), (None, None), (0, 0))
+        fy1, fy2 = map(np.fft.fft, (self.y1, self.y2), (None, None), (0, 0))
         # Apply FFT shift and scale by the degree of freedom weight
         fy1, fy2 = map(np.fft.fftshift, (np.sqrt(dofw) * fy1, np.sqrt(dofw) * fy2))
         # Compute the frequencies corresponding to the FFT output
