@@ -1,78 +1,166 @@
 import numpy as np
-from scipy.interpolate import griddata
+from numpy import pi, sinh, cosh
+from scipy import integrate
 
-class HelmholtzProcessor:
-    def __init__(self, u, v, x, y, method='linear'):
+try:
+    import mkl
+    np.use_fastnumpy = True
+except ImportError:
+    pass
+
+
+class HelmholtzDecomposition:
+    """
+    A class to compute the Helmholtz decomposition of KE spectra into rotational
+    and divergent components based on Buhler et al. (JFM 2014).
+    """
+
+    def __init__(self, k, Cu, Cv, Cuv, u=None, v=None, GM=False, gm_file_path=None):
         """
-        Initialize the HelmholtzProcessor with velocity field components.
+        Initialize the decomposition class.
 
         Parameters:
-        u (array-like): Zonal velocity component.
-        v (array-like): Meridional velocity component.
-        x (array-like): x-coordinates of the velocity field.
-        y (array-like): y-coordinates of the velocity field.
-        method (str, optional): Interpolation method to use ('linear', 'nearest', 'cubic'). Default is 'linear'.
+        k : array-like
+            Wavenumber array.
+        Cu : array-like
+            Spectrum of across-track velocity.
+        Cv : array-like
+            Spectrum of along-track velocity.
+        GM : bool, optional
+            Use GM decomposition if True. Default is False.
+        gm_file_path : str, optional
+            Path to the GM data file, required if GM=True.
         """
+        self.k = k
+        self.Cu = Cu
+        self.Cv = Cv
+        self.Cuv = Cuv
         self.u = u
         self.v = v
-        self.x = x
-        self.y = y
-        self.method = method
+        self.GM = GM
+        self.gm_file_path = gm_file_path
 
-    def interpolate_velocity(self, grid_x, grid_y):
+        if GM and gm_file_path is None:
+            raise ValueError("GM file path must be provided when GM=True.")
+
+    @staticmethod
+    def diff_central(x, y):
         """
-        Interpolate the velocity field to a new grid.
+        Compute the central difference of y with respect to x.
 
         Parameters:
-        grid_x (array-like): x-coordinates of the new grid.
-        grid_y (array-like): y-coordinates of the new grid.
+        x : array-like
+            Independent variable.
+        y : array-like
+            Dependent variable.
 
         Returns:
-        tuple: Interpolated zonal and meridional velocity components (u_interp, v_interp).
+        array-like
+            Central difference values.
         """
-        # Flatten the input coordinates and velocity components
-        points = np.array([self.x.flatten(), self.y.flatten()]).T
-        u_values = self.u.flatten()
-        v_values = self.v.flatten()
+        x0, x1, x2 = x[:-2], x[1:-1], x[2:]
+        y0, y1, y2 = y[:-2], y[1:-1], y[2:]
+        f = (x2 - x1) / (x2 - x0)
+        return (1 - f) * (y2 - y1) / (x2 - x1) + f * (y1 - y0) / (x1 - x0)
 
-        # Create a meshgrid for the new coordinates
-        grid_x, grid_y = np.meshgrid(grid_x, grid_y)
-        grid_points = np.array([grid_x.flatten(), grid_y.flatten()]).T
-
-        # Interpolate the zonal (u) and meridional (v) velocity components
-        u_interp = griddata(points, u_values, grid_points, method=self.method).reshape(grid_x.shape)
-        v_interp = griddata(points, v_values, grid_points, method=self.method).reshape(grid_y.shape)
-
-        return u_interp, v_interp
-
-    def compute_divergence(self):
+    def isotropic_decomposition(self):
         """
-        Compute the divergence of the velocity field.
+        Perform the Helmholtz decomposition.
 
         Returns:
-        array-like: Divergence of the velocity field.
+        tuple
+            Rotational and divergent components, and other GM-specific values if GM=True.
         """
-        # Compute the partial derivatives of u and v with respect to x and y
-        du_dx = np.gradient(self.u, axis=1)
-        dv_dy = np.gradient(self.v, axis=0)
+        s = np.log(self.k)
+        Cu, Cv = self.Cu, self.Cv
 
-        # Divergence is the sum of the partial derivatives
-        divergence = du_dx + dv_dy
+        Fphi = np.zeros_like(Cu)
+        Fpsi = np.zeros_like(Cu)
+        Cphi = np.zeros_like(Cu)
+        Cpsi = np.zeros_like(Cu)
 
-        return divergence
+        if self.GM:
+            gm_data = np.load(self.gm_file_path)
+            f2omg2 = gm_data['rgm']
+            ks = gm_data['k'] * 1.e3
 
-    def compute_vorticity(self):
+        for i in range(s.size - 1):
+            sh, ch = sinh(s[i] - s[i:]), cosh(s[i] - s[i:])
+            Fp = Cu[i:] * sh + Cv[i:] * ch
+            Fs = Cv[i:] * sh + Cu[i:] * ch
+
+            Fpsi[i] = integrate.simps(Fs, s[i:])
+            Fphi[i] = integrate.simps(Fp, s[i:])
+
+            Fpsi[Fpsi < 0.] = 0.
+            Fphi[Fphi < 0.] = 0.
+
+        Cpsi = Fpsi - Fphi + Cu
+        Cphi = Fphi - Fpsi + Cv
+
+        if self.GM:
+            f2omg2i = np.interp(self.k, ks, f2omg2)
+            Cv_w = f2omg2i * Fphi - Fpsi + Cv
+            Cv_v = Cv - Cv_w
+
+            kdkromg = self.diff_central(ks, f2omg2)
+            kdkromg = np.interp(self.k, ks[1:-1], kdkromg)
+
+            dFphi = self.diff_central(self.k, Fphi)
+            dFphi = np.interp(self.k, self.k[1:-1], dFphi.real)
+            E_w = Fphi - self.k * dFphi
+
+            Cu_w = -self.k * kdkromg * Fphi + f2omg2i * (-Fpsi + Cv) + Fphi
+            Cu_v = Cu - Cu_w
+
+            Cb_w = E_w - (Cu_w + Cv_w) / 2.
+
+            return Cpsi, Cphi, Cu_w, Cv_w, Cu_v, Cv_v, E_w, Cb_w
+
+        return Cpsi, Cphi
+    
+    def model3_decomposition(self):
         """
-        Compute the vorticity of the velocity field.
+        Perform the Helmholtz decomposition.
 
         Returns:
-        array-like: Vorticity of the velocity field.
+        tuple
+            Rotational and divergent components, and other GM-specific values if GM=True.
         """
-        # Compute the partial derivatives of u and v with respect to y and x
-        dv_dx = np.gradient(self.v, axis=1)
-        du_dy = np.gradient(self.u, axis=0)
+        s = self.k
+        Cu, Cv, Cuv = self.Cu, self.Cv, self.Cuv
+        u,v = self.u,self.v
 
-        # Vorticity is the difference between the partial derivatives
-        vorticity = dv_dx - du_dy
+        Kpsi = np.zeros_like(Cu)
+        Kphi = np.zeros_like(Cu)
 
-        return vorticity
+        w = np.ones(len(u))
+        Eu2 = np.nansum((np.dot(u**2,w))) / np.sum(w)
+        Ev2 = np.nansum((np.dot(v**2,w))) / np.sum(w)
+        Euv = np.nansum((np.dot(u*v,w))) / np.sum(w)
+
+        E = (Eu2 - Ev2) / Euv
+
+        if self.GM:
+            gm_data = np.load(self.gm_file_path)
+            f2omg2 = gm_data['rgm']
+            ks = gm_data['k'] * 1.e3
+
+        for i in range(s.size - 1):
+            K = Cv[i:] - Cu[i:] + Cuv[i:]*E
+
+            Kpsi[i] = .5 * (Cv[i] + (1/s) * integrate.simps(K, s[i:]))
+            Kphi[i] = .5 * (Cu[i] - (1/s) * integrate.simps(K, s[i:]))
+
+            Kpsi[Kpsi < 0.] = 0.
+            Kphi[Kphi < 0.] = 0.
+
+        Cpsi_u = 4*Kpsi - Cv + E*Cuv + s * (self.diff_central(2*Kpsi,s) - self.diff_central(Cv,s))
+        Cphi_v = Cpsi_u + Cv - 2*Kpsi
+        Cphi_uv = (1/E) * (Cphi_v - Cpsi_u + s * self.diff_central(Cphi_v,s))
+
+        Cphi_u = Cu - Cpsi_u
+        Cpsi_v = Cv - Cphi_v
+        Cpsi_uv = Cuv - Cphi_uv
+
+        return Cpsi_u,Cphi_u,Cpsi_v,Cphi_v,Cpsi_uv,Cphi_uv
