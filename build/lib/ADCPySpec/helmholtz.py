@@ -89,8 +89,8 @@ class HelmholtzDecomposition:
             Fp = Cu[i:] * sh + Cv[i:] * ch
             Fs = Cv[i:] * sh + Cu[i:] * ch
 
-            Fpsi[i] = integrate.simpson(Fs, s[i:])
-            Fphi[i] = integrate.simpson(Fp, s[i:])
+            Fpsi[i] = integrate.simpson(Fs, x=s[i:])
+            Fphi[i] = integrate.simpson(Fp, x=s[i:])
 
             Fpsi[Fpsi < 0.] = 0.
             Fphi[Fphi < 0.] = 0.
@@ -152,8 +152,8 @@ class HelmholtzDecomposition:
             Kpsi[i] = .5 * (Cv[i] + (1/s[i]) * integrate.simpson(K,x=s[i:]))
             Kphi[i] = .5 * (Cu[i] - (1/s[i]) * integrate.simpson(K,x=s[i:]))
 
-            # Kpsi[Kpsi < 0.] = 0.
-            # Kphi[Kphi < 0.] = 0.
+            Kpsi[Kpsi < 0.] = 0.
+            Kphi[Kphi < 0.] = 0.
 
         dKpsi = self.diff_central(Kpsi,s)
         dKpsi = np.interp(self.k, self.k[1:-1], dKpsi)

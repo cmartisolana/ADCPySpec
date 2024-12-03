@@ -114,11 +114,16 @@ class SpectrumProcessor:
             self.y2 = np.rollaxis(self.y2, self.ax, start=0)
 
         # Compute the FFT of both signals
-        fy1, fy2 = map(np.fft.fft, (self.y1, self.y2), (None, None), (0, 0))
+        fy1 = np.fft.rfft(self.y1)
+        fy2 = np.fft.rfft(self.y2)
         # Apply FFT shift and scale by the degree of freedom weight
         fy1, fy2 = map(np.fft.fftshift, (np.sqrt(dofw) * fy1, np.sqrt(dofw) * fy2))
         # Compute the frequencies corresponding to the FFT output
-        freqs = np.fft.fftshift(np.fft.fftfreq(N, d))
+        self.df = 1./(N*d)
+        if self.neven:
+            freqs = self.df*np.arange(N/2+1)
+        else:
+            freqs = self.df*np.arange( (N-1)/2.  + 1 )
 
         # Calculate the power spectral density of each signal
         py1 = (d / N) * np.abs(fy1)**2
