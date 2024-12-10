@@ -15,7 +15,7 @@ class HelmholtzDecomposition:
     and divergent components based on Buhler et al. (JFM 2014).
     """
 
-    def __init__(self, k, Cu, Cv, Cuv, u=None, v=None, GM=False, gm_file_path=None):
+    def __init__(self, k, Cu, Cv, Cuv, u=None, v=None):
         """
         Initialize the decomposition class.
 
@@ -37,11 +37,6 @@ class HelmholtzDecomposition:
         self.Cuv = Cuv
         self.u = u
         self.v = v
-        self.GM = GM
-        self.gm_file_path = gm_file_path
-
-        if GM and gm_file_path is None:
-            raise ValueError("GM file path must be provided when GM=True.")
 
     @staticmethod
     def diff_central(x, y):
@@ -79,11 +74,6 @@ class HelmholtzDecomposition:
         Cphi = np.zeros_like(Cu)
         Cpsi = np.zeros_like(Cu)
 
-        if self.GM:
-            gm_data = np.load(self.gm_file_path)
-            f2omg2 = gm_data['rgm']
-            ks = gm_data['k'] * 1.e3
-
         for i in range(s.size - 1):
             sh, ch = sinh(s[i] - s[i:]), cosh(s[i] - s[i:])
             Fp = Cu[i:] * sh + Cv[i:] * ch
@@ -92,32 +82,18 @@ class HelmholtzDecomposition:
             Fpsi[i] = integrate.simpson(Fs,x=s[i:])
             Fphi[i] = integrate.simpson(Fp,x=s[i:])
 
-            Fpsi[Fpsi < 0.] = 0.
-            Fphi[Fphi < 0.] = 0.
+            # Fpsi[Fpsi < 0.] = 0
+            # Fphi[Fphi < 0.] = 0
 
         Cpsi = Fpsi - Fphi + Cu
         Cphi = Fphi - Fpsi + Cv
 
-        if self.GM:
-            f2omg2i = np.interp(self.k, ks, f2omg2)
-            Cv_w = f2omg2i * Fphi - Fpsi + Cv
-            Cv_v = Cv - Cv_w
+        dFphi = self.diff_central(self.k, Fphi)
+        dFphi = np.interp(self.k, self.k[1:-1], dFphi.real)
 
-            kdkromg = self.diff_central(ks, f2omg2)
-            kdkromg = np.interp(self.k, ks[1:-1], kdkromg)
+        E_w = Fphi - self.k * dFphi
 
-            dFphi = self.diff_central(self.k, Fphi)
-            dFphi = np.interp(self.k, self.k[1:-1], dFphi.real)
-            E_w = Fphi - self.k * dFphi
-
-            Cu_w = -self.k * kdkromg * Fphi + f2omg2i * (-Fpsi + Cv) + Fphi
-            Cu_v = Cu - Cu_w
-
-            Cb_w = E_w - (Cu_w + Cv_w) / 2.
-
-            return Cpsi, Cphi, Cu_w, Cv_w, Cu_v, Cv_v, E_w, Cb_w
-
-        return Cpsi, Cphi
+        return Cpsi, Cphi, E_w
     
     def model3_decomposition(self):
         """
@@ -141,19 +117,14 @@ class HelmholtzDecomposition:
 
         E = (Eu2 - Ev2) / Euv
 
-        if self.GM:
-            gm_data = np.load(self.gm_file_path)
-            f2omg2 = gm_data['rgm']
-            ks = gm_data['k'] * 1.e3
-
         for i in range(s.size - 1):
             K = Cv[i:] - Cu[i:] + Cuv[i:]*E
 
             Kpsi[i] = .5 * (Cv[i] + (1/s[i]) * integrate.simpson(K,x=s[i:]))
             Kphi[i] = .5 * (Cu[i] - (1/s[i]) * integrate.simpson(K,x=s[i:]))
 
-            Kpsi[Kpsi < 0.] = 0.
-            Kphi[Kphi < 0.] = 0.
+            # Kpsi[Kpsi < 0.] = "Nan"
+            # Kphi[Kphi < 0.] = "Nan"
 
         dKpsi = self.diff_central(Kpsi,s)
         dKpsi = np.interp(self.k, self.k[1:-1], dKpsi)
@@ -173,4 +144,5 @@ class HelmholtzDecomposition:
         Cpsi_v = Cv - Cphi_v
         Cpsi_uv = Cuv - Cphi_uv
 
-        return Cpsi_u,Cphi_u,Cpsi_v,Cphi_v,Cpsi_uv,Cphi_uv
+
+        return Cpsi_u,Cphi_u,Cpsi_v,Cphi_v,Cpsi_uv,Cphi_uv, Kpsi, Kphi, Eu2, Ev2, Euv

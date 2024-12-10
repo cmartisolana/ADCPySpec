@@ -116,20 +116,29 @@ class SpectrumProcessor:
         # Compute the FFT of both signals
         fy1 = np.fft.rfft(self.y1)
         fy2 = np.fft.rfft(self.y2)
-        # Apply FFT shift and scale by the degree of freedom weight
-        fy1, fy2 = map(np.fft.fftshift, (np.sqrt(dofw) * fy1, np.sqrt(dofw) * fy2))
+
         # Compute the frequencies corresponding to the FFT output
         self.df = 1./(N*d)
-        if self.neven:
+        if N % 2 == 0: # Even
             freqs = self.df*np.arange(N/2+1)
-        else:
-            freqs = self.df*np.arange( (N-1)/2.  + 1 )
+        else: # Odd
+            freqs = self.df*np.arange( (N-1)/2. + 1 )
 
         # Calculate the power spectral density of each signal
-        py1 = (d / N) * np.abs(fy1)**2
-        py2 = (d / N) * np.abs(fy2)**2
+        # the factor of 2 comes from the symmetry of the Fourier coeffs
+        py1 = 2.*(fy1*fy1.conj()).real / self.df / N**2
+        py2 = 2.*(fy2*fy2.conj()).real / self.df / N**2
+        # the zeroth frequency should be counted only once
+        py1[0] = py1[0]/2.
+        py2[0] = py2[0]/2.
+        if N % 2 == 0:
+            py1[-1] = py1[-1]/2.
+            py2[-1] = py2[-1]/2.
+
+        print("E")
+
         # Calculate the cross-spectrum between the two signals
-        py1y2 = (d / N) * (fy1.conj() * fy2)
+        py1y2 = 2.*(fy1.conj() * fy2) / self.df / N**2
 
         cy1y2 = (d/N)*( fy1.real*fy2.real + fy1.imag*fy2.imag ) # coincident spectrum
         qy1y2 = (d/N)*( fy1.real*fy2.imag - fy2.real*fy1.imag ) # quadrature spectrum
