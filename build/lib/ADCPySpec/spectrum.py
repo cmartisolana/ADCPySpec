@@ -135,8 +135,6 @@ class SpectrumProcessor:
             py1[-1] = py1[-1]/2.
             py2[-1] = py2[-1]/2.
 
-        print("E")
-
         # Calculate the cross-spectrum between the two signals
         py1y2 = 2.*(fy1.conj() * fy2) / self.df / N**2
 

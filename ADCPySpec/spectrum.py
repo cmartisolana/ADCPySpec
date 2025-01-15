@@ -63,6 +63,60 @@ class SpectrumProcessor:
         # Concatenate the padding arrays to the beginning and end of the input
         yn = np.concatenate((pads, y, pads), axis=self.ax)
         return yn
+    
+    def compute_one_signal_spectrum(self):
+         # Calculate the sampling interval (assumes uniform spacing)
+        d = np.diff(self.x, axis=self.ax).mean()
+        # Determine the length of the input along the specified axis
+        N = self.y1.shape[self.ax]
+
+        # Validate the window choice
+        if self.win not in ['boxcar', 'hann', 'hamming', 'bartlett', 'blackman', 'triang', None]:
+            raise ValueError("Window choice is invalid")
+
+        # Apply the window to the signals if specified
+        if self.win is not None:
+            # Get the window function from scipy.signal.windows
+            win = getattr(windows, self.win)(N, sym=False)
+            # Calculate the degree of freedom weight
+            dofw = len(win) / np.sum(win**2)
+            # Reshape the window to match the dimensions of the input signals
+            win = win.reshape((N,) + (1,) * (self.y1.ndim - 1))
+            # Roll the axis if necessary to match the input axis
+            if self.ax != 0 and self.ax != -1:
+                win = np.rollaxis(win, 0, start=self.ax + 1)
+            elif self.ax != 0 and self.ax == -1:
+                win = np.rollaxis(win, 0, start=self.y1.ndim)
+            # Apply the window to both input signals
+            self.y1 *= win
+        else:
+            dofw = 1.0
+
+        # Roll the axis of the input signals if necessary
+        if self.ax != 0:
+            self.y1 = np.rollaxis(self.y1, self.ax, start=0)
+
+        # Compute the FFT
+        fy1 = np.fft.rfft(self.y1)
+
+        # Compute the frequencies corresponding to the FFT output
+        self.df = 1./(N*d)
+        if N % 2 == 0: # Even
+            freqs = self.df*np.arange(N/2+1)
+        else: # Odd
+            freqs = self.df*np.arange( (N-1)/2. + 1 )
+
+        # Calculate the power spectral density of the signal
+        # the factor of 2 comes from the symmetry of the Fourier coeffs
+        py1 = 2.*(fy1*fy1.conj()).real / self.df / N**2
+        # the zeroth frequency should be counted only once
+        py1[0] = py1[0]/2.
+        if N % 2 == 0:
+            py1[-1] = py1[-1]/2.
+        
+        # Return the computed frequencies
+        return freqs, py1
+
 
 
     def compute_cross_spectrum(self):
@@ -134,8 +188,6 @@ class SpectrumProcessor:
         if N % 2 == 0:
             py1[-1] = py1[-1]/2.
             py2[-1] = py2[-1]/2.
-
-        print("E")
 
         # Calculate the cross-spectrum between the two signals
         py1y2 = 2.*(fy1.conj() * fy2) / self.df / N**2

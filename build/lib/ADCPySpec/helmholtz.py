@@ -15,7 +15,7 @@ class HelmholtzDecomposition:
     and divergent components based on Buhler et al. (JFM 2014).
     """
 
-    def __init__(self, k, Cu, Cv, Cuv, u=None, v=None):
+    def __init__(self, k, Cu, Cv, Cuv, u=None, v=None, theta=None):
         """
         Initialize the decomposition class.
 
@@ -37,6 +37,7 @@ class HelmholtzDecomposition:
         self.Cuv = Cuv
         self.u = u
         self.v = v
+        self.theta = theta
 
     @staticmethod
     def diff_central(x, y):
@@ -76,24 +77,30 @@ class HelmholtzDecomposition:
 
         for i in range(s.size - 1):
             sh, ch = sinh(s[i] - s[i:]), cosh(s[i] - s[i:])
-            Fp = Cu[i:] * sh + Cv[i:] * ch
-            Fs = Cv[i:] * sh + Cu[i:] * ch
+            Fp = Cv[i:] * sh + Cu[i:] * ch
+            Fs = Cu[i:] * sh + Cv[i:] * ch
 
             Fpsi[i] = integrate.simpson(Fs,x=s[i:])
             Fphi[i] = integrate.simpson(Fp,x=s[i:])
 
-            # Fpsi[Fpsi < 0.] = 0
-            # Fphi[Fphi < 0.] = 0
+            Fpsi[Fpsi < 0.] = "Nan"
+            Fphi[Fphi < 0.] = "Nan"
 
-        Cpsi = Fpsi - Fphi + Cu
-        Cphi = Fphi - Fpsi + Cv
+        # Cpsi = Fpsi - Fphi + Cu
+        # Cphi = Fphi - Fpsi + Cv
 
         dFphi = self.diff_central(self.k, Fphi)
         dFphi = np.interp(self.k, self.k[1:-1], dFphi.real)
 
+        dFpsi = self.diff_central(self.k, Fpsi)
+        dFpsi = np.interp(self.k, self.k[1:-1], dFpsi.real)
+
+        Kpsi = (Fpsi - self.k*dFpsi)/2
+        Kphi = (Fphi - self.k*dFphi)/2
+
         E_w = Fphi - self.k * dFphi
 
-        return Cpsi, Cphi, E_w
+        return Fpsi, Fphi, Kpsi, Kphi, E_w
     
     def model3_decomposition(self):
         """
@@ -115,16 +122,20 @@ class HelmholtzDecomposition:
         Ev2 = np.nansum((np.dot(v**2,w))) / np.sum(w)
         Euv = np.nansum((np.dot(u*v,w))) / np.sum(w)
 
-        E = (Eu2 - Ev2) / Euv
+        if self.theta == None:
+            E = (Eu2 - Ev2) / Euv
+        
+        else:
+            E = 2*(1/np.tan(2*self.theta))
 
         for i in range(s.size - 1):
             K = Cv[i:] - Cu[i:] + Cuv[i:]*E
 
-            Kpsi[i] = .5 * (Cv[i] + (1/s[i]) * integrate.simpson(K,x=s[i:]))
-            Kphi[i] = .5 * (Cu[i] - (1/s[i]) * integrate.simpson(K,x=s[i:]))
+            Kpsi[i] = .5 * (Cv[i] + ((1/s[i]) * integrate.simpson(K,x=s[i:])))
+            Kphi[i] = .5 * (Cu[i] - ((1/s[i]) * integrate.simpson(K,x=s[i:])))
 
-            # Kpsi[Kpsi < 0.] = "Nan"
-            # Kphi[Kphi < 0.] = "Nan"
+            Kpsi[Kpsi < 0.] = "Nan"
+            Kphi[Kphi < 0.] = "Nan"
 
         dKpsi = self.diff_central(Kpsi,s)
         dKpsi = np.interp(self.k, self.k[1:-1], dKpsi)
@@ -143,6 +154,5 @@ class HelmholtzDecomposition:
         Cphi_u = Cu - Cpsi_u
         Cpsi_v = Cv - Cphi_v
         Cpsi_uv = Cuv - Cphi_uv
-
 
         return Cpsi_u,Cphi_u,Cpsi_v,Cphi_v,Cpsi_uv,Cphi_uv, Kpsi, Kphi, Eu2, Ev2, Euv
