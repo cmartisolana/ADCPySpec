@@ -10,7 +10,6 @@ class SpectrumProcessor:
 
         Parameters:
         x (array-like): Independent variable, typically time.
-        dt (float): Sampling interval.
         y1 (array-like): First input signal (optional).
         y2 (array-like): Second input signal (optional, for cross-spectrum).
         win (str): Type of window to use. Default is None.
